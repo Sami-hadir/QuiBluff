@@ -56,13 +56,21 @@ const Lobby: React.FC<LobbyProps> = ({ state, myId }) => {
   const [loading, setLoading] = useState(false);
 
   const handleStart = async () => {
+    if (loading) return;
     setLoading(true);
+    
     try {
+        console.log("Host starting game with settings:", settings);
+        
+        // 1. Send settings and questions to server, wait for ACK
         await GameService.updateSettings(settings);
+        
+        // 2. Only after ACK, send start signal
         GameService.startGame();
+        
     } catch (e) {
-        console.error(e);
-        alert("שגיאה ביצירת המשחק");
+        console.error("Error starting game:", e);
+        alert("שגיאה ביצירת המשחק, אנא נסה שוב.");
         setLoading(false);
     }
   };
@@ -102,13 +110,13 @@ const Lobby: React.FC<LobbyProps> = ({ state, myId }) => {
                     <label className="block text-sm font-bold mb-2 ms-1 text-gray-300">מצב משחק</label>
                     <div className="grid grid-cols-2 gap-2">
                         <button 
-                            onClick={() => setSettings({...settings, mode: 'BLUFF'})}
+                            onClick={() => setSettings(prev => ({...prev, mode: 'BLUFF'}))}
                             className={`p-3 rounded-xl border-4 border-black font-bold transition-transform active:scale-95 ${settings.mode === 'BLUFF' ? 'bg-qb-purple shadow-neo text-white' : 'bg-slate-700 text-gray-400'}`}
                         >
                             בלוף
                         </button>
                         <button 
-                            onClick={() => setSettings({...settings, mode: 'CLASSIC'})}
+                            onClick={() => setSettings(prev => ({...prev, mode: 'CLASSIC'}))}
                             className={`p-3 rounded-xl border-4 border-black font-bold transition-transform active:scale-95 ${settings.mode === 'CLASSIC' ? 'bg-qb-blue shadow-neo text-white' : 'bg-slate-700 text-gray-400'}`}
                         >
                             רגיל
@@ -120,7 +128,7 @@ const Lobby: React.FC<LobbyProps> = ({ state, myId }) => {
                     <label className="block text-sm font-bold mb-2 ms-1 text-gray-300">נושא</label>
                     <select 
                         value={settings.topic}
-                        onChange={(e) => setSettings({...settings, topic: e.target.value})}
+                        onChange={(e) => setSettings(prev => ({...prev, topic: e.target.value}))}
                         className="w-full bg-slate-700 border-4 border-black rounded-xl px-4 py-3 text-white focus:outline-none focus:border-qb-yellow"
                     >
                         {MOCK_TOPICS.map(t => <option key={t} value={t}>{t}</option>)}
@@ -133,7 +141,7 @@ const Lobby: React.FC<LobbyProps> = ({ state, myId }) => {
                     <input 
                         type="range" min="3" max="10" 
                         value={settings.rounds}
-                        onChange={(e) => setSettings({...settings, rounds: Number(e.target.value)})}
+                        onChange={(e) => setSettings(prev => ({...prev, rounds: Number(e.target.value)}))}
                         className="w-full accent-qb-yellow h-4 bg-slate-700 rounded-lg appearance-none cursor-pointer"
                         dir="ltr"
                     />

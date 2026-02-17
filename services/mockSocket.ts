@@ -32,6 +32,7 @@ const getSocket = () => {
     });
 
     socket.on('game_state_update', (state: GameState) => {
+      // console.log('State Update:', state.currentPhase, state.timeLeft);
       notify(state);
     });
     
@@ -57,7 +58,6 @@ export const createRoom = (nickname: string, avatarId: string): Promise<{code: s
       if (!response || response.error) {
           reject(response?.error || 'Failed to create room');
       } else {
-          // IMMEDIATE UPDATE: If server returns state, update UI immediately
           if (response.state) notify(response.state);
           resolve(response);
       }
@@ -72,7 +72,6 @@ export const joinRoom = (roomCode: string, nickname: string, avatarId: string): 
       if (!response || response.error) {
           reject(response?.error || 'Failed to join room');
       } else {
-          // IMMEDIATE UPDATE: If server returns state, update UI immediately
           if (response.state) notify(response.state);
           resolve(response);
       }
@@ -81,18 +80,29 @@ export const joinRoom = (roomCode: string, nickname: string, avatarId: string): 
 };
 
 export const updateSettings = async (settings: GameSettings): Promise<void> => {
-  // Generate questions on the Host client
+  console.log("Generating questions for topic:", settings.topic);
+  
+  // 1. Generate questions on the Host client using Gemini
   const questions = await generateQuestions(settings.topic, settings.rounds, settings.mode);
   
-  return new Promise((resolve) => {
+  console.log("Questions generated:", questions.length, "Sending to server...");
+
+  // 2. Send settings AND questions to server and WAIT for acknowledgment
+  return new Promise((resolve, reject) => {
       getSocket().emit('update_settings', { settings, questions }, (response: any) => {
-          // Wait for acknowledgment
-          resolve();
+          if (response && response.success) {
+            console.log("Server acknowledged settings update.");
+            resolve();
+          } else {
+            console.error("Server failed to update settings");
+            reject("Server failed to update settings");
+          }
       });
   });
 };
 
 export const startGame = () => {
+  console.log("Emitting start_game...");
   getSocket().emit('start_game');
 };
 

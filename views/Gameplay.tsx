@@ -27,6 +27,7 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
 
   // Reset local state on new round
   React.useEffect(() => {
+    // Only reset bluff text when we are actually in the bluffing phase
     if (state.currentPhase === 'BLUFFING') {
         setBluffText('');
         setSubmittedBluff(false);
@@ -40,6 +41,7 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
       <header className="flex justify-between items-center mb-6 bg-slate-800 p-4 rounded-xl border-2 border-black shadow-neo-sm">
         <div className="flex items-center gap-2">
             <span className="text-qb-blue font-black text-xl">סיבוב {state.currentRound}/{state.totalRounds}</span>
+            {state.mode === 'CLASSIC' && <span className="text-xs bg-gray-600 text-white px-2 py-1 rounded">רגיל</span>}
         </div>
         <div className="flex items-center gap-2" dir="ltr">
             <span className="text-3xl">⏱</span>
@@ -54,8 +56,8 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
 
       <AnimatePresence mode="wait">
         
-        {/* Phase: BLUFFING */}
-        {state.currentPhase === 'BLUFFING' && (
+        {/* Phase: BLUFFING (Only show if phase matches AND mode is BLUFF) */}
+        {state.currentPhase === 'BLUFFING' && state.mode === 'BLUFF' && (
            <motion.div 
              key="bluffing"
              initial={{ opacity: 0, y: 20 }}
@@ -78,6 +80,7 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
                             onChange={(e) => setBluffText(e.target.value)}
                             maxLength={50}
                             className="text-center text-xl"
+                            autoFocus
                         />
                         <Button variant="accent" size="xl" fullWidth className="mt-6" onClick={handleSubmitBluff}>
                             שלח בלוף
@@ -93,7 +96,7 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
            </motion.div>
         )}
 
-        {/* Phase: VOTING or QUESTION (Classic) */}
+        {/* Phase: VOTING or QUESTION (Classic goes straight here) */}
         {(state.currentPhase === 'VOTING' || state.currentPhase === 'QUESTION') && (
             <motion.div 
                 key="voting"
@@ -150,19 +153,22 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
                     {state.currentOptions.map((opt) => {
                         const isCorrect = opt.authorId === 'SYSTEM';
                         const voters = state.players.filter(p => p.selectedAnswerId === opt.id);
+                        const isMySelection = me?.selectedAnswerId === opt.id;
                         
                         return (
                             <div 
                                 key={opt.id}
                                 className={`
                                     p-4 rounded-xl border-4 border-black flex justify-between items-center relative overflow-hidden
-                                    ${isCorrect ? 'bg-green-500 text-white' : 'bg-slate-700 text-gray-300'}
+                                    ${isCorrect ? 'bg-green-600 text-white border-green-800' : 'bg-slate-700 text-gray-300'}
+                                    ${isMySelection && !isCorrect ? 'ring-4 ring-red-500' : ''}
                                 `}
                             >
-                                <div className="z-10 relative">
+                                <div className="z-10 relative flex-1">
                                     <span className="font-bold text-xl block">{opt.text}</span>
-                                    {!isCorrect && opt.authorId && (
-                                        <span className="text-xs text-black bg-white/50 px-2 rounded">
+                                    {/* Show author only in Bluff mode if it's not system */}
+                                    {!isCorrect && opt.authorId && opt.authorId !== 'SYSTEM' && state.mode === 'BLUFF' && (
+                                        <span className="text-xs text-black bg-white/50 px-2 rounded mt-1 inline-block">
                                             בלוף של: {state.players.find(p => p.id === opt.authorId)?.nickname}
                                         </span>
                                     )}
