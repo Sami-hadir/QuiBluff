@@ -135,7 +135,7 @@ const Home: React.FC<HomeProps> = ({ onJoin }) => {
                      
                      <div className="relative z-10 flex flex-col items-center gap-6">
                         <div className="w-24 h-24 bg-black rounded-full flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform duration-300 ring-4 ring-black/20">
-                           <svg viewBox="0 0 24 24" fill="white" className="w-12 h-12 ml-1"><path d="M8 5v14l11-7z"/></svg> 
+                           <svg viewBox="0 0 24 24" fill="white" className="w-12 h-12 ml-2 rotate-180"><path d="M8 5v14l11-7z"/></svg> 
                         </div>
                         <div>
                            <h2 className="text-4xl md:text-5xl font-black text-black uppercase tracking-tight drop-shadow-sm">התחל משחק</h2>
