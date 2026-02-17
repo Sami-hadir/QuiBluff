@@ -1,0 +1,5 @@
+{
+  "name": "QuiBluff",
+  "description": "A real-time multiplayer trivia game with Bluff and Classic modes. Features a vibrant neubrutalist design, AI-generated questions, and simulated multiplayer gameplay with bots.",
+  "requestFramePermissions": []
+}
