@@ -13,7 +13,6 @@ app.use(express.static(path.join(__dirname, 'dist')));
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    // Added http protocol as requested to prevent CORS blocks
     origin: ["https://quibluff.tech", "http://quibluff.tech", "http://localhost:3000"],
     methods: ["GET", "POST"],
     credentials: true
@@ -36,6 +35,7 @@ const startGameLoop = (roomCode) => {
   const room = rooms.get(roomCode);
   if (!room) return;
 
+  // Clear existing timer to prevent double-speed or race conditions
   if (room.timer) clearInterval(room.timer);
 
   room.timer = setInterval(() => {
@@ -47,8 +47,10 @@ const startGameLoop = (roomCode) => {
     // Timer logic
     if (state.timeLeft > 0) {
       state.timeLeft--;
-      // Bot Logic Trigger (Simplified)
-      if (Math.random() > 0.8) runBotLogic(r);
+      
+      // Bot Logic Trigger
+      if (Math.random() > 0.85) runBotLogic(r);
+      
     } else {
       // Time's up - Transition Phase
       handlePhaseTransition(r);
@@ -60,13 +62,17 @@ const startGameLoop = (roomCode) => {
 
 const runBotLogic = (room) => {
     const { state } = room;
+    // Bots submit bluffs in BLUFF mode
     if (state.currentPhase === 'BLUFFING') {
         state.players.filter(p => p.isBot && !p.currentBluff).forEach(bot => {
-             if (Math.random() > 0.9) bot.currentBluff = "Bot Bluff";
+             // Delay bot action slightly
+             if (Math.random() > 0.8) bot.currentBluff = "תשובה של בוט";
         });
-    } else if (state.currentPhase === 'VOTING') {
+    } 
+    // Bots vote in VOTING mode
+    else if (state.currentPhase === 'VOTING') {
         state.players.filter(p => p.isBot && !p.selectedAnswerId).forEach(bot => {
-             if (Math.random() > 0.9 && state.currentOptions.length > 0) {
+             if (Math.random() > 0.8 && state.currentOptions.length > 0) {
                  const randomOpt = state.currentOptions[Math.floor(Math.random() * state.currentOptions.length)];
                  bot.selectedAnswerId = randomOpt.id;
              }
@@ -77,37 +83,44 @@ const runBotLogic = (room) => {
 const handlePhaseTransition = (room) => {
     const { state } = room;
 
+    // --- FROM BLUFFING TO VOTING ---
     if (state.currentPhase === 'BLUFFING') {
-        // Transition to VOTING
         const q = state.currentQuestion;
+        
+        // Safety check: if no question, go to leaderboard (end of game/error)
         if (!q) {
              state.currentPhase = 'LEADERBOARD';
              state.timeLeft = 5;
              return;
         }
 
+        // Collect all answers: Real Answer + Player Bluffs + Bot Bluffs
         const options = [{ id: 'real', text: q.correctAnswer, authorId: 'SYSTEM' }];
         
         state.players.forEach(p => {
             if (p.currentBluff) options.push({ id: `bluff-${p.id}`, text: p.currentBluff, authorId: p.id });
-            else if (p.isBot) options.push({ id: `bluff-${p.id}`, text: "Bot Answer", authorId: p.id });
+            else if (p.isBot) options.push({ id: `bluff-${p.id}`, text: "תשובה בוטית", authorId: p.id });
         });
         
+        // Shuffle options
         state.currentOptions = options.sort(() => Math.random() - 0.5);
         state.currentPhase = 'VOTING';
         state.timeLeft = 30;
-
-    } else if (state.currentPhase === 'VOTING') {
-        // Transition to RESULT
+    } 
+    
+    // --- FROM VOTING TO RESULT ---
+    else if (state.currentPhase === 'VOTING') {
         // Calculate scores
         state.players.forEach(p => {
             if (!p.selectedAnswerId) return;
             const selected = state.currentOptions.find(o => o.id === p.selectedAnswerId);
             if (!selected) return;
 
+            // Points for correct answer
             if (selected.authorId === 'SYSTEM') {
                 p.score += 1000;
             } else {
+                // Points for fooling someone (BLUFF mode only mostly, but logic works for both)
                 const author = state.players.find(pl => pl.id === selected.authorId);
                 if (author) author.score += 500;
             }
@@ -115,47 +128,46 @@ const handlePhaseTransition = (room) => {
 
         state.currentPhase = 'RESULT';
         state.timeLeft = 10;
-
-    } else if (state.currentPhase === 'RESULT') {
-        // Transition to LEADERBOARD
+    } 
+    
+    // --- FROM RESULT TO LEADERBOARD (Or Next Round) ---
+    else if (state.currentPhase === 'RESULT') {
         state.currentPhase = 'LEADERBOARD';
-        state.timeLeft = 5;
-
-    } else if (state.currentPhase === 'LEADERBOARD') {
-        // Next Round or End
+        state.timeLeft = 5; // Show leaderboard for 5 seconds before next round
+    } 
+    
+    // --- FROM LEADERBOARD TO NEXT ROUND ---
+    else if (state.currentPhase === 'LEADERBOARD') {
         state.currentRound++;
         
-        if (state.currentRound > state.totalRounds) {
-            // End Game
+        // Check if Game Over
+        if (state.currentRound > state.totalRounds || !room.questions || room.questions.length < state.currentRound) {
             state.winner = [...state.players].sort((a,b) => b.score - a.score)[0];
-            clearInterval(room.timer);
-        } else {
-            // Check if we have questions
-            if (!room.questions || room.questions.length < state.currentRound) {
-                console.error("Missing questions for round " + state.currentRound);
-                state.winner = [...state.players].sort((a,b) => b.score - a.score)[0];
-                clearInterval(room.timer);
-                return;
-            }
+            clearInterval(room.timer); // Stop the loop
+            return;
+        }
 
-            // Next Question
-            const q = room.questions[state.currentRound - 1];
-            state.currentQuestion = q;
+        // Setup Next Question
+        const q = room.questions[state.currentRound - 1]; // Array is 0-indexed, Round is 1-indexed
+        state.currentQuestion = q;
+        
+        // Reset player round-state
+        state.players.forEach(p => {
+            p.currentBluff = undefined;
+            p.selectedAnswerId = undefined;
+        });
+        
+        // Set Phase based on Mode
+        if (state.mode === 'BLUFF') {
+            state.currentPhase = 'BLUFFING';
+            state.currentOptions = []; // Clear options, waiting for bluffs
+            state.timeLeft = 45;
+        } else {
+            // CLASSIC MODE
+            state.currentPhase = 'VOTING';
+            // CRITICAL: Load the pre-generated options for Classic mode
             state.currentOptions = q.options || []; 
-            
-            // Reset player state
-            state.players.forEach(p => {
-                p.currentBluff = undefined;
-                p.selectedAnswerId = undefined;
-            });
-            
-            if (state.mode === 'BLUFF') {
-                state.currentPhase = 'BLUFFING';
-                state.timeLeft = 45;
-            } else {
-                state.currentPhase = 'VOTING';
-                state.timeLeft = state.timePerQuestion;
-            }
+            state.timeLeft = state.timePerQuestion || 30;
         }
     }
 };
@@ -166,7 +178,7 @@ io.on('connection', (socket) => {
 
   socket.on('create_room', ({ nickname, avatarId }, callback) => {
     const code = Math.floor(1000 + Math.random() * 9000).toString();
-    const playerId = socket.id; // Using socket.id as playerId
+    const playerId = socket.id;
     
     const initialState = {
       roomCode: code,
@@ -183,11 +195,7 @@ io.on('connection', (socket) => {
     rooms.set(code, { state: initialState, questions: [], timer: null });
     socket.join(code);
     
-    // IMPORTANT: Return code, playerId, and initial state to client immediately
-    if (callback) {
-        callback({ code, playerId, state: initialState });
-    }
-    
+    if (callback) callback({ code, playerId, state: initialState });
     broadcastState(code);
   });
 
@@ -198,10 +206,9 @@ io.on('connection', (socket) => {
         return;
     }
     
-    const playerId = socket.id; // Using socket.id as playerId
+    const playerId = socket.id;
     const newPlayer = { id: playerId, nickname, avatarId, score: 0, isHost: false };
     
-    // Check if player already exists (reconnection logic basic)
     const existing = room.state.players.find(p => p.nickname === nickname); 
     if (!existing) {
         room.state.players.push(newPlayer);
@@ -209,11 +216,7 @@ io.on('connection', (socket) => {
     
     socket.join(roomCode);
     
-    // IMPORTANT: Return code, playerId, and current state to client immediately
-    if (callback) {
-        callback({ code: roomCode, playerId, state: room.state });
-    }
-    
+    if (callback) callback({ code: roomCode, playerId, state: room.state });
     broadcastState(roomCode);
   });
 
@@ -222,14 +225,15 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomCode);
     if (!room) return;
 
-    room.state.mode = settings.mode;
-    // Set total rounds to actual number of questions generated to avoid mismatch
-    room.state.totalRounds = questions.length;
+    // Update Room State
+    room.state.mode = settings.mode; // 'BLUFF' or 'CLASSIC'
+    room.state.totalRounds = questions.length; // Sync with actual generated count
     room.state.timePerQuestion = settings.time;
-    room.questions = questions; 
+    room.questions = questions; // Save questions to server memory
+    
+    console.log(`Room ${roomCode} updated: Mode=${settings.mode}, Questions=${questions.length}`);
     
     broadcastState(roomCode);
-    
     if (callback) callback({ success: true });
   });
 
@@ -239,38 +243,42 @@ io.on('connection', (socket) => {
     
     if (!room) return;
     if (!room.questions || room.questions.length === 0) {
-        console.error("Cannot start game: No questions generated.");
+        console.error("Cannot start game: No questions available.");
         return;
     }
 
-    // START GAME IMMEDIATELY - ROUND 1
-    room.state.currentRound = 1;
+    // --- INITIALIZE GAME START ---
     
-    // Set First Question
+    // Clear any existing timer to avoid conflicts
+    if (room.timer) clearInterval(room.timer);
+
+    room.state.currentRound = 1;
     const q = room.questions[0];
     room.state.currentQuestion = q;
     
-    // Reset player states
+    // Reset players
     room.state.players.forEach(p => {
         p.currentBluff = undefined;
         p.selectedAnswerId = undefined;
+        p.score = 0; // Reset score on new game
     });
 
+    // Determine Initial Phase based on Mode
     if (room.state.mode === 'BLUFF') {
         room.state.currentPhase = 'BLUFFING';
-        room.state.currentOptions = []; 
-        room.state.timeLeft = 45; // Give time to write
+        room.state.currentOptions = []; // Clear options
+        room.state.timeLeft = 45; 
     } else {
-        // Classic Mode
+        // CLASSIC MODE -> Jump straight to Voting
         room.state.currentPhase = 'VOTING';
+        // IMPORTANT: Load options immediately for Classic mode
         room.state.currentOptions = q.options || []; 
         room.state.timeLeft = room.state.timePerQuestion;
     }
 
-    // Broadcast immediate start
+    console.log(`Starting game in room ${roomCode}. Mode: ${room.state.mode}, Phase: ${room.state.currentPhase}`);
+
     broadcastState(roomCode);
-    
-    // Start Loop
     startGameLoop(roomCode);
   });
 
@@ -299,7 +307,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+    // Optional: handle cleanup
   });
 });
 

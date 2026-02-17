@@ -9,28 +9,31 @@ const getAi = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
-// Fallback questions if API fails or no key - Translated to Hebrew
+// Fallback questions
 const FALLBACK_QUESTIONS: Question[] = [
   {
     id: 'f1',
     text: "איזה בעל חיים ידוע בכך שיש לו אישונים מלבניים?",
     correctAnswer: "עז",
-    options: [],
+    options: [
+        {id: 'f1-1', text: 'עז', authorId: 'SYSTEM'},
+        {id: 'f1-2', text: 'חתול', authorId: 'SYSTEM'},
+        {id: 'f1-3', text: 'נחש', authorId: 'SYSTEM'},
+        {id: 'f1-4', text: 'סוס', authorId: 'SYSTEM'}
+    ],
     category: "חיות"
   },
   {
     id: 'f2',
     text: "מה היה הצעצוע הראשון שפורסם בטלוויזיה?",
     correctAnswer: "מר תפוח אדמה",
-    options: [],
+    options: [
+        {id: 'f2-1', text: 'מר תפוח אדמה', authorId: 'SYSTEM'},
+        {id: 'f2-2', text: 'ברבי', authorId: 'SYSTEM'},
+        {id: 'f2-3', text: 'לגו', authorId: 'SYSTEM'},
+        {id: 'f2-4', text: 'מונופול', authorId: 'SYSTEM'}
+    ],
     category: "היסטוריה"
-  },
-  {
-    id: 'f3',
-    text: "במדינת ג'ורג'יה, לא חוקי לאכול את המאכל הזה עם מזלג?",
-    correctAnswer: "עוף מטוגן",
-    options: [],
-    category: "חוקים"
   }
 ];
 
@@ -39,11 +42,12 @@ export const generateQuestions = async (topic: string, count: number, mode: 'CLA
   if (!ai) return FALLBACK_QUESTIONS.slice(0, count);
 
   try {
-    // Updated prompt for Hebrew content
+    const isClassic = mode === 'CLASSIC';
+    
     const prompt = `Generate ${count} trivia questions in Hebrew about "${topic}". 
-    ${mode === 'BLUFF' 
-      ? 'The questions should be obscure, open-ended enough that players can invent plausible fake answers. Only provide the correct answer.' 
-      : 'Provide the correct answer and 3 incorrect but plausible options.'}
+    ${isClassic 
+      ? 'Mode: Classic Multiple Choice. Provide the correct answer and 3 distinct, plausible incorrect options (distractors).' 
+      : 'Mode: Bluff. Provide ONLY the correct answer. The question should be obscure enough for players to invent fake answers.'}
     `;
 
     const questionSchema: Schema = {
@@ -54,7 +58,7 @@ export const generateQuestions = async (topic: string, count: number, mode: 'CLA
         wrongOptions: { 
             type: Type.ARRAY, 
             items: { type: Type.STRING },
-            description: "3 wrong options in Hebrew (only if Classic mode, otherwise empty array)" 
+            description: "Exactly 3 wrong options in Hebrew (Required for Classic mode, empty for Bluff)" 
         }
       },
       required: ["text", "correctAnswer"]
@@ -76,16 +80,29 @@ export const generateQuestions = async (topic: string, count: number, mode: 'CLA
 
     const rawData = JSON.parse(response.text);
     
-    return rawData.map((q: any, index: number) => ({
-      id: `gen-${Date.now()}-${index}`,
-      text: q.text,
-      correctAnswer: q.correctAnswer,
-      category: topic,
-      options: mode === 'CLASSIC' ? [
-          { id: 'correct', text: q.correctAnswer, authorId: 'SYSTEM' },
-          ...(q.wrongOptions || []).map((opt: string, i: number) => ({ id: `wrong-${i}`, text: opt, authorId: 'SYSTEM' }))
-      ].sort(() => Math.random() - 0.5) : []
-    }));
+    return rawData.map((q: any, index: number) => {
+        // Construct options for Classic mode immediately so they are ready for the server
+        let options: any[] = [];
+        
+        if (isClassic) {
+             options = [
+                { id: `q${index}-real`, text: q.correctAnswer, authorId: 'SYSTEM' },
+                ...(q.wrongOptions || ["אופציה 1", "אופציה 2", "אופציה 3"]).slice(0, 3).map((opt: string, i: number) => ({
+                    id: `q${index}-wrong-${i}`,
+                    text: opt,
+                    authorId: 'SYSTEM'
+                }))
+             ].sort(() => Math.random() - 0.5);
+        }
+
+        return {
+            id: `gen-${Date.now()}-${index}`,
+            text: q.text,
+            correctAnswer: q.correctAnswer,
+            category: topic,
+            options: options // Send prepared options to server
+        };
+    });
 
   } catch (error) {
     console.error("Gemini Generation Error:", error);
