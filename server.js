@@ -166,7 +166,7 @@ io.on('connection', (socket) => {
 
   socket.on('create_room', ({ nickname, avatarId }, callback) => {
     const code = Math.floor(1000 + Math.random() * 9000).toString();
-    const playerId = socket.id;
+    const playerId = socket.id; // Using socket.id as playerId
     
     const initialState = {
       roomCode: code,
@@ -183,17 +183,22 @@ io.on('connection', (socket) => {
     rooms.set(code, { state: initialState, questions: [], timer: null });
     socket.join(code);
     
-    // Return code AND initial state to client immediately
-    callback({ code, playerId, state: initialState });
+    // IMPORTANT: Return code, playerId, and initial state to client immediately
+    if (callback) {
+        callback({ code, playerId, state: initialState });
+    }
     
     broadcastState(code);
   });
 
   socket.on('join_room', ({ roomCode, nickname, avatarId }, callback) => {
     const room = rooms.get(roomCode);
-    if (!room) return callback({ error: 'Room not found' });
+    if (!room) {
+        if (callback) callback({ error: 'Room not found' });
+        return;
+    }
     
-    const playerId = socket.id;
+    const playerId = socket.id; // Using socket.id as playerId
     const newPlayer = { id: playerId, nickname, avatarId, score: 0, isHost: false };
     
     // Check if player already exists (reconnection logic basic)
@@ -204,8 +209,10 @@ io.on('connection', (socket) => {
     
     socket.join(roomCode);
     
-    // Return code AND current state to client immediately
-    callback({ code: roomCode, playerId, state: room.state });
+    // IMPORTANT: Return code, playerId, and current state to client immediately
+    if (callback) {
+        callback({ code: roomCode, playerId, state: room.state });
+    }
     
     broadcastState(roomCode);
   });
@@ -216,7 +223,8 @@ io.on('connection', (socket) => {
     if (!room) return;
 
     room.state.mode = settings.mode;
-    room.state.totalRounds = settings.rounds;
+    // Set total rounds to actual number of questions generated to avoid mismatch
+    room.state.totalRounds = questions.length;
     room.state.timePerQuestion = settings.time;
     room.questions = questions; 
     
@@ -235,10 +243,34 @@ io.on('connection', (socket) => {
         return;
     }
 
-    room.state.currentRound = 0;
-    room.state.currentPhase = 'LEADERBOARD'; 
-    room.state.timeLeft = 1; 
+    // START GAME IMMEDIATELY - ROUND 1
+    room.state.currentRound = 1;
     
+    // Set First Question
+    const q = room.questions[0];
+    room.state.currentQuestion = q;
+    
+    // Reset player states
+    room.state.players.forEach(p => {
+        p.currentBluff = undefined;
+        p.selectedAnswerId = undefined;
+    });
+
+    if (room.state.mode === 'BLUFF') {
+        room.state.currentPhase = 'BLUFFING';
+        room.state.currentOptions = []; 
+        room.state.timeLeft = 45; // Give time to write
+    } else {
+        // Classic Mode
+        room.state.currentPhase = 'VOTING';
+        room.state.currentOptions = q.options || []; 
+        room.state.timeLeft = room.state.timePerQuestion;
+    }
+
+    // Broadcast immediate start
+    broadcastState(roomCode);
+    
+    // Start Loop
     startGameLoop(roomCode);
   });
 
