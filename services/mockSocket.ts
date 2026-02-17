@@ -69,10 +69,16 @@ export const joinRoom = (roomCode: string, nickname: string, avatarId: string): 
   });
 };
 
-export const updateSettings = async (settings: GameSettings) => {
+export const updateSettings = async (settings: GameSettings): Promise<void> => {
   // Generate questions on the Host client
   const questions = await generateQuestions(settings.topic, settings.rounds, settings.mode);
-  getSocket().emit('update_settings', { settings, questions });
+  
+  return new Promise((resolve) => {
+      getSocket().emit('update_settings', { settings, questions }, (response: any) => {
+          // Wait for acknowledgment
+          resolve();
+      });
+  });
 };
 
 export const startGame = () => {
