@@ -34,7 +34,7 @@ const handlePhaseTransition = (room, roomCode) => {
   const { state } = room;
   
   if (state.currentPhase === 'BLUFFING') {
-    // מעבר מבלוף להצבעה
+    // מעבר מבלוף להצבעה (קורה רק במצב BLUFF)
     state.currentPhase = 'VOTING';
     state.timeLeft = 30;
     const q = state.currentQuestion;
@@ -48,9 +48,8 @@ const handlePhaseTransition = (room, roomCode) => {
     state.currentOptions = options.sort(() => Math.random() - 0.5);
 
   } else if (state.currentPhase === 'VOTING') {
-    // מעבר מהצבעה לתוצאות - חישוב ניקוד
+    // מעבר מהצבעה לתוצאות - כאן מחשבים ניקוד
     
-    // 1. זיהוי התשובה הנכונה
     const correctText = state.currentQuestion.correctAnswer;
     
     state.players.forEach(p => {
@@ -58,18 +57,19 @@ const handlePhaseTransition = (room, roomCode) => {
             const selectedOption = state.currentOptions.find(opt => opt.id === p.selectedAnswerId);
             
             if (selectedOption) {
-                // בדיקה אם ענה נכון
-                // במצב CLASSIC, ה-AuthorId הוא SYSTEM. במצב BLUFF גם.
-                // בדיקה כפולה מול הטקסט ליתר ביטחון
-                if (selectedOption.authorId === 'SYSTEM' && selectedOption.text === correctText) {
-                    p.score += 100; // ניקוד בסיסי על תשובה נכונה
+                // 1. ניקוד על תשובה נכונה
+                const isCorrect = selectedOption.text === correctText; 
+                
+                if (isCorrect) {
+                    p.score += 100;
                 }
 
-                // מצב BLUFF: ניקוד לשחקן שהצליח להטעות (מישהו בחר בבלוף שלו)
-                if (state.mode === 'BLUFF' && selectedOption.authorId !== 'SYSTEM') {
+                // 2. ניקוד על בלוף (רק במצב BLUFF)
+                // אם מישהו בחר בתשובה שלי, והיא לא התשובה הנכונה, אני מקבל נקודות
+                if (state.mode === 'BLUFF' && selectedOption.authorId && selectedOption.authorId !== 'SYSTEM' && !isCorrect) {
                     const bluffer = state.players.find(b => b.id === selectedOption.authorId);
                     if (bluffer) {
-                        bluffer.score += 50; // ניקוד על הטעיה
+                        bluffer.score += 50; 
                     }
                 }
             }
@@ -96,16 +96,17 @@ const handlePhaseTransition = (room, roomCode) => {
       const nextQ = room.questions[state.currentRound - 1];
       state.currentQuestion = nextQ;
       
-      // איפוס בחירות השחקנים
+      // איפוס בחירות
       state.players.forEach(p => { p.currentBluff = null; p.selectedAnswerId = null; });
       
       if (state.mode === 'CLASSIC') {
-        state.currentPhase = 'VOTING';
-        // עדכון: שימוש באופציות המוכנות שמגיעות מהקליינט/Gemini
+        state.currentPhase = 'VOTING'; // מדלגים על שלב הבלוף
+        // שימוש ישיר באופציות המוכנות שמגיעות מהקליינט (תשובה נכונה + 3 מסיחים)
         state.currentOptions = nextQ.options || []; 
         state.timeLeft = 30;
       } else {
         state.currentPhase = 'BLUFFING';
+        state.currentOptions = []; // מאפסים אופציות עד שלב ההצבעה
         state.timeLeft = 45;
       }
     }
@@ -176,11 +177,12 @@ io.on('connection', (socket) => {
       
       if (room.state.mode === 'CLASSIC') {
         room.state.currentPhase = 'VOTING';
-        // עדכון: שימוש באופציות המוכנות (שכבר מכילות ID ומסיחים)
+        // שימוש ישיר באופציות המוכנות
         room.state.currentOptions = q.options || [];
         room.state.timeLeft = 30;
       } else {
         room.state.currentPhase = 'BLUFFING';
+        room.state.currentOptions = [];
         room.state.timeLeft = 45;
       }
       broadcastState(roomCode);
