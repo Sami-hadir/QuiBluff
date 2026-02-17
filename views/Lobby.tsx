@@ -55,10 +55,16 @@ const Lobby: React.FC<LobbyProps> = ({ state, myId }) => {
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(false);
 
-  const handleStart = () => {
+  const handleStart = async () => {
     setLoading(true);
-    GameService.updateSettings(settings);
-    GameService.startGame();
+    try {
+        await GameService.updateSettings(settings);
+        GameService.startGame();
+    } catch (e) {
+        console.error(e);
+        alert("שגיאה ביצירת המשחק");
+        setLoading(false);
+    }
   };
 
   return (
