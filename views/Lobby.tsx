@@ -62,10 +62,10 @@ const Lobby: React.FC<LobbyProps> = ({ state, myId }) => {
     try {
         console.log("Host starting game with settings:", settings);
         
-        // 1. Send settings and questions to server, wait for ACK
+        // IMPORTANT: Await the server acknowledgment before starting
         await GameService.updateSettings(settings);
         
-        // 2. Only after ACK, send start signal
+        // Only trigger start if update was successful
         GameService.startGame();
         
     } catch (e) {

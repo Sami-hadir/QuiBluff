@@ -24,7 +24,7 @@ const getSocket = () => {
       transports: ['websocket', 'polling'],
       autoConnect: true,
       reconnectionAttempts: 5,
-      withCredentials: true // Ensure cookies/sessions work if needed
+      withCredentials: true
     });
 
     socket.on('connect', () => {
@@ -32,7 +32,6 @@ const getSocket = () => {
     });
 
     socket.on('game_state_update', (state: GameState) => {
-      // console.log('State Update:', state.currentPhase, state.timeLeft);
       notify(state);
     });
     
@@ -80,14 +79,14 @@ export const joinRoom = (roomCode: string, nickname: string, avatarId: string): 
 };
 
 export const updateSettings = async (settings: GameSettings): Promise<void> => {
-  console.log("Generating questions for topic:", settings.topic);
+  console.log("Generating questions for topic:", settings.topic, "Mode:", settings.mode);
   
   // 1. Generate questions on the Host client using Gemini
   const questions = await generateQuestions(settings.topic, settings.rounds, settings.mode);
   
   console.log("Questions generated:", questions.length, "Sending to server...");
 
-  // 2. Send settings AND questions to server and WAIT for acknowledgment
+  // 2. Send settings AND questions to server and WAIT for acknowledgment (Callback)
   return new Promise((resolve, reject) => {
       getSocket().emit('update_settings', { settings, questions }, (response: any) => {
           if (response && response.success) {

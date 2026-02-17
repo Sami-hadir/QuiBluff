@@ -1,295 +1,199 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
-const path = require('path');
+import express from 'express';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
 
-// Serve static files from the build directory
-app.use(express.static(path.join(__dirname, 'dist')));
+// הגדרת תיקיית ה-dist של ה-Frontend
+const distPath = path.resolve(__dirname, 'dist');
+app.use(express.static(distPath));
 
-const server = http.createServer(app);
+const server = createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: ["https://quibluff.tech", "http://quibluff.tech", "http://localhost:3000"],
-    methods: ["GET", "POST"],
-    credentials: true
+    origin: ["https://quibluff.tech", "http://quibluff.tech"],
+    methods: ["GET", "POST"]
   }
 });
 
-// Game State Storage
 const rooms = new Map();
 
-// Helper to broadcast state
 const broadcastState = (roomCode) => {
   const room = rooms.get(roomCode);
-  if (room) {
-    io.to(roomCode).emit('game_state_update', room.state);
-  }
+  if (room) io.to(roomCode).emit('game_state_update', room.state);
 };
 
-// Game Loop Logic
+const handlePhaseTransition = (room, roomCode) => {
+  const { state } = room;
+  
+  if (state.currentPhase === 'BLUFFING') {
+    // מעבר מבלוף להצבעה
+    state.currentPhase = 'VOTING';
+    state.timeLeft = 30;
+    const q = state.currentQuestion;
+    
+    // יצירת אופציות למצב בלוף: התשובה הנכונה + הבלופים של השחקנים
+    const options = [{ id: 'real', text: q.correctAnswer, authorId: 'SYSTEM' }];
+    state.players.forEach(p => {
+      if (p.currentBluff) options.push({ id: `bluff-${p.id}`, text: p.currentBluff, authorId: p.id });
+    });
+    // ערבוב האופציות
+    state.currentOptions = options.sort(() => Math.random() - 0.5);
+
+  } else if (state.currentPhase === 'VOTING') {
+    // מעבר מהצבעה לתוצאות - חישוב ניקוד
+    
+    // 1. זיהוי התשובה הנכונה
+    const correctText = state.currentQuestion.correctAnswer;
+    
+    state.players.forEach(p => {
+        if (p.selectedAnswerId) {
+            const selectedOption = state.currentOptions.find(opt => opt.id === p.selectedAnswerId);
+            
+            if (selectedOption) {
+                // בדיקה אם ענה נכון
+                // במצב CLASSIC, ה-AuthorId הוא SYSTEM. במצב BLUFF גם.
+                // בדיקה כפולה מול הטקסט ליתר ביטחון
+                if (selectedOption.authorId === 'SYSTEM' && selectedOption.text === correctText) {
+                    p.score += 100; // ניקוד בסיסי על תשובה נכונה
+                }
+
+                // מצב BLUFF: ניקוד לשחקן שהצליח להטעות (מישהו בחר בבלוף שלו)
+                if (state.mode === 'BLUFF' && selectedOption.authorId !== 'SYSTEM') {
+                    const bluffer = state.players.find(b => b.id === selectedOption.authorId);
+                    if (bluffer) {
+                        bluffer.score += 50; // ניקוד על הטעיה
+                    }
+                }
+            }
+        }
+    });
+
+    state.currentPhase = 'RESULT';
+    state.timeLeft = 10;
+
+  } else if (state.currentPhase === 'RESULT') {
+    // מעבר לשאלה הבאה או לסיום
+    state.currentRound++;
+    if (state.currentRound > state.totalRounds) {
+      state.currentPhase = 'LEADERBOARD';
+      
+      // חישוב מנצח
+      const winner = state.players.reduce((prev, current) => (prev.score > current.score) ? prev : current, state.players[0]);
+      state.winner = winner;
+
+      state.timeLeft = 0;
+      if (room.timer) clearInterval(room.timer);
+    } else {
+      // הכנת השאלה הבאה
+      const nextQ = room.questions[state.currentRound - 1];
+      state.currentQuestion = nextQ;
+      
+      // איפוס בחירות השחקנים
+      state.players.forEach(p => { p.currentBluff = null; p.selectedAnswerId = null; });
+      
+      if (state.mode === 'CLASSIC') {
+        state.currentPhase = 'VOTING';
+        // עדכון: שימוש באופציות המוכנות שמגיעות מהקליינט/Gemini
+        state.currentOptions = nextQ.options || []; 
+        state.timeLeft = 30;
+      } else {
+        state.currentPhase = 'BLUFFING';
+        state.timeLeft = 45;
+      }
+    }
+  }
+  broadcastState(roomCode);
+};
+
 const startGameLoop = (roomCode) => {
   const room = rooms.get(roomCode);
-  if (!room) return;
-
-  // Clear existing timer to prevent double-speed or race conditions
   if (room.timer) clearInterval(room.timer);
-
   room.timer = setInterval(() => {
-    if (!rooms.has(roomCode)) return clearInterval(room.timer);
-
     const r = rooms.get(roomCode);
-    const state = r.state;
-
-    // Timer logic
-    if (state.timeLeft > 0) {
-      state.timeLeft--;
-      
-      // Bot Logic Trigger
-      if (Math.random() > 0.85) runBotLogic(r);
-      
+    if (!r) return clearInterval(room.timer);
+    if (r.state.timeLeft > 0) {
+      r.state.timeLeft--;
+      broadcastState(roomCode);
     } else {
-      // Time's up - Transition Phase
-      handlePhaseTransition(r);
+      handlePhaseTransition(r, roomCode);
     }
-    
-    broadcastState(roomCode);
   }, 1000);
 };
 
-const runBotLogic = (room) => {
-    const { state } = room;
-    // Bots submit bluffs in BLUFF mode
-    if (state.currentPhase === 'BLUFFING') {
-        state.players.filter(p => p.isBot && !p.currentBluff).forEach(bot => {
-             // Delay bot action slightly
-             if (Math.random() > 0.8) bot.currentBluff = "תשובה של בוט";
-        });
-    } 
-    // Bots vote in VOTING mode
-    else if (state.currentPhase === 'VOTING') {
-        state.players.filter(p => p.isBot && !p.selectedAnswerId).forEach(bot => {
-             if (Math.random() > 0.8 && state.currentOptions.length > 0) {
-                 const randomOpt = state.currentOptions[Math.floor(Math.random() * state.currentOptions.length)];
-                 bot.selectedAnswerId = randomOpt.id;
-             }
-        });
-    }
-};
-
-const handlePhaseTransition = (room) => {
-    const { state } = room;
-
-    // --- FROM BLUFFING TO VOTING ---
-    if (state.currentPhase === 'BLUFFING') {
-        const q = state.currentQuestion;
-        
-        // Safety check: if no question, go to leaderboard (end of game/error)
-        if (!q) {
-             state.currentPhase = 'LEADERBOARD';
-             state.timeLeft = 5;
-             return;
-        }
-
-        // Collect all answers: Real Answer + Player Bluffs + Bot Bluffs
-        const options = [{ id: 'real', text: q.correctAnswer, authorId: 'SYSTEM' }];
-        
-        state.players.forEach(p => {
-            if (p.currentBluff) options.push({ id: `bluff-${p.id}`, text: p.currentBluff, authorId: p.id });
-            else if (p.isBot) options.push({ id: `bluff-${p.id}`, text: "תשובה בוטית", authorId: p.id });
-        });
-        
-        // Shuffle options
-        state.currentOptions = options.sort(() => Math.random() - 0.5);
-        state.currentPhase = 'VOTING';
-        state.timeLeft = 30;
-    } 
-    
-    // --- FROM VOTING TO RESULT ---
-    else if (state.currentPhase === 'VOTING') {
-        // Calculate scores
-        state.players.forEach(p => {
-            if (!p.selectedAnswerId) return;
-            const selected = state.currentOptions.find(o => o.id === p.selectedAnswerId);
-            if (!selected) return;
-
-            // Points for correct answer
-            if (selected.authorId === 'SYSTEM') {
-                p.score += 1000;
-            } else {
-                // Points for fooling someone (BLUFF mode only mostly, but logic works for both)
-                const author = state.players.find(pl => pl.id === selected.authorId);
-                if (author) author.score += 500;
-            }
-        });
-
-        state.currentPhase = 'RESULT';
-        state.timeLeft = 10;
-    } 
-    
-    // --- FROM RESULT TO LEADERBOARD (Or Next Round) ---
-    else if (state.currentPhase === 'RESULT') {
-        state.currentPhase = 'LEADERBOARD';
-        state.timeLeft = 5; // Show leaderboard for 5 seconds before next round
-    } 
-    
-    // --- FROM LEADERBOARD TO NEXT ROUND ---
-    else if (state.currentPhase === 'LEADERBOARD') {
-        state.currentRound++;
-        
-        // Check if Game Over
-        if (state.currentRound > state.totalRounds || !room.questions || room.questions.length < state.currentRound) {
-            state.winner = [...state.players].sort((a,b) => b.score - a.score)[0];
-            clearInterval(room.timer); // Stop the loop
-            return;
-        }
-
-        // Setup Next Question
-        const q = room.questions[state.currentRound - 1]; // Array is 0-indexed, Round is 1-indexed
-        state.currentQuestion = q;
-        
-        // Reset player round-state
-        state.players.forEach(p => {
-            p.currentBluff = undefined;
-            p.selectedAnswerId = undefined;
-        });
-        
-        // Set Phase based on Mode
-        if (state.mode === 'BLUFF') {
-            state.currentPhase = 'BLUFFING';
-            state.currentOptions = []; // Clear options, waiting for bluffs
-            state.timeLeft = 45;
-        } else {
-            // CLASSIC MODE
-            state.currentPhase = 'VOTING';
-            // CRITICAL: Load the pre-generated options for Classic mode
-            state.currentOptions = q.options || []; 
-            state.timeLeft = state.timePerQuestion || 30;
-        }
-    }
-};
-
-
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-
   socket.on('create_room', ({ nickname, avatarId }, callback) => {
     const code = Math.floor(1000 + Math.random() * 9000).toString();
-    const playerId = socket.id;
-    
     const initialState = {
       roomCode: code,
-      players: [{ id: playerId, nickname, avatarId, score: 0, isHost: true }],
+      players: [{ id: socket.id, nickname, avatarId, score: 0, isHost: true }],
       mode: 'BLUFF',
       currentPhase: 'LOBBY',
       currentRound: 0,
       totalRounds: 5,
-      timePerQuestion: 30,
-      currentOptions: [],
       timeLeft: 0
     };
-
     rooms.set(code, { state: initialState, questions: [], timer: null });
     socket.join(code);
-    
-    if (callback) callback({ code, playerId, state: initialState });
-    broadcastState(code);
+    if (callback) callback({ code, playerId: socket.id, state: initialState });
   });
 
   socket.on('join_room', ({ roomCode, nickname, avatarId }, callback) => {
     const room = rooms.get(roomCode);
-    if (!room) {
-        if (callback) callback({ error: 'Room not found' });
-        return;
-    }
-    
-    const playerId = socket.id;
-    const newPlayer = { id: playerId, nickname, avatarId, score: 0, isHost: false };
-    
-    const existing = room.state.players.find(p => p.nickname === nickname); 
-    if (!existing) {
-        room.state.players.push(newPlayer);
-    }
-    
+    if (!room) return callback?.({ error: 'Room not found' });
+    room.state.players.push({ id: socket.id, nickname, avatarId, score: 0, isHost: false });
     socket.join(roomCode);
-    
-    if (callback) callback({ code: roomCode, playerId, state: room.state });
+    if (callback) callback({ code: roomCode, playerId: socket.id, state: room.state });
     broadcastState(roomCode);
   });
 
   socket.on('update_settings', ({ settings, questions }, callback) => {
     const roomCode = Array.from(socket.rooms).find(r => r !== socket.id);
     const room = rooms.get(roomCode);
-    if (!room) return;
-
-    // Update Room State
-    room.state.mode = settings.mode; // 'BLUFF' or 'CLASSIC'
-    room.state.totalRounds = questions.length; // Sync with actual generated count
-    room.state.timePerQuestion = settings.time;
-    room.questions = questions; // Save questions to server memory
-    
-    console.log(`Room ${roomCode} updated: Mode=${settings.mode}, Questions=${questions.length}`);
-    
-    broadcastState(roomCode);
-    if (callback) callback({ success: true });
+    if (room) {
+      room.state.mode = settings.mode;
+      room.state.totalRounds = settings.rounds;
+      room.questions = questions;
+      broadcastState(roomCode);
+      if (callback) callback({ success: true });
+    }
   });
 
   socket.on('start_game', () => {
     const roomCode = Array.from(socket.rooms).find(r => r !== socket.id);
     const room = rooms.get(roomCode);
-    
-    if (!room) return;
-    if (!room.questions || room.questions.length === 0) {
-        console.error("Cannot start game: No questions available.");
-        return;
-    }
-
-    // --- INITIALIZE GAME START ---
-    
-    // Clear any existing timer to avoid conflicts
-    if (room.timer) clearInterval(room.timer);
-
-    room.state.currentRound = 1;
-    const q = room.questions[0];
-    room.state.currentQuestion = q;
-    
-    // Reset players
-    room.state.players.forEach(p => {
-        p.currentBluff = undefined;
-        p.selectedAnswerId = undefined;
-        p.score = 0; // Reset score on new game
-    });
-
-    // Determine Initial Phase based on Mode
-    if (room.state.mode === 'BLUFF') {
-        room.state.currentPhase = 'BLUFFING';
-        room.state.currentOptions = []; // Clear options
-        room.state.timeLeft = 45; 
-    } else {
-        // CLASSIC MODE -> Jump straight to Voting
+    if (room && room.questions.length > 0) {
+      room.state.currentRound = 1;
+      const q = room.questions[0];
+      room.state.currentQuestion = q;
+      
+      if (room.state.mode === 'CLASSIC') {
         room.state.currentPhase = 'VOTING';
-        // IMPORTANT: Load options immediately for Classic mode
-        room.state.currentOptions = q.options || []; 
-        room.state.timeLeft = room.state.timePerQuestion;
+        // עדכון: שימוש באופציות המוכנות (שכבר מכילות ID ומסיחים)
+        room.state.currentOptions = q.options || [];
+        room.state.timeLeft = 30;
+      } else {
+        room.state.currentPhase = 'BLUFFING';
+        room.state.timeLeft = 45;
+      }
+      broadcastState(roomCode);
+      startGameLoop(roomCode);
     }
-
-    console.log(`Starting game in room ${roomCode}. Mode: ${room.state.mode}, Phase: ${room.state.currentPhase}`);
-
-    broadcastState(roomCode);
-    startGameLoop(roomCode);
   });
 
   socket.on('submit_bluff', ({ text, playerId }) => {
     const roomCode = Array.from(socket.rooms).find(r => r !== socket.id);
     const room = rooms.get(roomCode);
-    if (!room) return;
-
-    const p = room.state.players.find(p => p.id === playerId);
-    if (p) {
-        p.currentBluff = text;
+    if (room) {
+        const p = room.state.players.find(pl => pl.id === playerId);
+        if (p) p.currentBluff = text;
         broadcastState(roomCode);
     }
   });
@@ -297,25 +201,25 @@ io.on('connection', (socket) => {
   socket.on('submit_vote', ({ optionId, playerId }) => {
     const roomCode = Array.from(socket.rooms).find(r => r !== socket.id);
     const room = rooms.get(roomCode);
-    if (!room) return;
-
-    const p = room.state.players.find(p => p.id === playerId);
-    if (p) {
-        p.selectedAnswerId = optionId;
+    if (room) {
+        const p = room.state.players.find(pl => pl.id === playerId);
+        if (p) p.selectedAnswerId = optionId;
         broadcastState(roomCode);
     }
   });
-
-  socket.on('disconnect', () => {
-    // Optional: handle cleanup
-  });
 });
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+// פתרון חסין תקלות לניתוב (למניעת 502)
+app.use((req, res, next) => {
+  const ext = path.extname(req.path);
+  if (ext !== '' && ext !== '.html') {
+    next();
+  } else {
+    res.sendFile(path.join(distPath, 'index.html'));
+  }
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+const PORT = 3000;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on port ${PORT}`);
 });

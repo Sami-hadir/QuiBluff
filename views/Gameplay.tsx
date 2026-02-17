@@ -27,12 +27,19 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
 
   // Reset local state on new round
   React.useEffect(() => {
-    // Only reset bluff text when we are actually in the bluffing phase
     if (state.currentPhase === 'BLUFFING') {
         setBluffText('');
         setSubmittedBluff(false);
     }
   }, [state.currentRound, state.currentPhase]);
+
+  // Determine if we should show the Voting screen
+  // 1. If phase is VOTING or QUESTION
+  // 2. OR if we are in CLASSIC mode and have options (skipping the visual "Bluff" phase)
+  const showVoting = 
+    state.currentPhase === 'VOTING' || 
+    state.currentPhase === 'QUESTION' || 
+    (state.mode === 'CLASSIC' && state.currentOptions && state.currentOptions.length > 0);
 
   return (
     <div className="min-h-screen flex flex-col p-4 max-w-4xl mx-auto">
@@ -96,8 +103,8 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
            </motion.div>
         )}
 
-        {/* Phase: VOTING or QUESTION (Classic goes straight here) */}
-        {(state.currentPhase === 'VOTING' || state.currentPhase === 'QUESTION') && (
+        {/* Phase: VOTING or CLASSIC MODE */}
+        {showVoting && (
             <motion.div 
                 key="voting"
                 initial={{ opacity: 0, scale: 0.9 }}
@@ -151,23 +158,28 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
 
                 <div className="grid gap-3">
                     {state.currentOptions.map((opt) => {
-                        const isCorrect = opt.authorId === 'SYSTEM';
+                        const isCorrect = opt.authorId === 'SYSTEM' && opt.text === state.currentQuestion?.correctAnswer;
                         const voters = state.players.filter(p => p.selectedAnswerId === opt.id);
                         const isMySelection = me?.selectedAnswerId === opt.id;
                         
+                        // In Classic Mode, SYSTEM is always the author, so we check correctAnswer text match or metadata logic if available
+                        // For simplicity in this structure: The server usually marks correct one. 
+                        // But here, since we rely on authorId='SYSTEM', let's double check against the stored correct Answer text
+                        const actuallyCorrect = opt.text === state.currentQuestion?.correctAnswer;
+
                         return (
                             <div 
                                 key={opt.id}
                                 className={`
                                     p-4 rounded-xl border-4 border-black flex justify-between items-center relative overflow-hidden
-                                    ${isCorrect ? 'bg-green-600 text-white border-green-800' : 'bg-slate-700 text-gray-300'}
-                                    ${isMySelection && !isCorrect ? 'ring-4 ring-red-500' : ''}
+                                    ${actuallyCorrect ? 'bg-green-600 text-white border-green-800' : 'bg-slate-700 text-gray-300'}
+                                    ${isMySelection && !actuallyCorrect ? 'ring-4 ring-red-500' : ''}
                                 `}
                             >
                                 <div className="z-10 relative flex-1">
                                     <span className="font-bold text-xl block">{opt.text}</span>
                                     {/* Show author only in Bluff mode if it's not system */}
-                                    {!isCorrect && opt.authorId && opt.authorId !== 'SYSTEM' && state.mode === 'BLUFF' && (
+                                    {!actuallyCorrect && opt.authorId && opt.authorId !== 'SYSTEM' && state.mode === 'BLUFF' && (
                                         <span className="text-xs text-black bg-white/50 px-2 rounded mt-1 inline-block">
                                             בלוף של: {state.players.find(p => p.id === opt.authorId)?.nickname}
                                         </span>
@@ -182,7 +194,7 @@ const Gameplay: React.FC<GameplayProps> = ({ state, myId }) => {
                                     ))}
                                 </div>
                                 
-                                {isCorrect && <div className="absolute inset-0 bg-white/10 animate-pulse"></div>}
+                                {actuallyCorrect && <div className="absolute inset-0 bg-white/10 animate-pulse"></div>}
                             </div>
                         );
                     })}
