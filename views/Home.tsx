@@ -15,7 +15,6 @@ const Home: React.FC<HomeProps> = ({ onJoin }) => {
   const [nickname, setNickname] = useState('');
   const [avatar, setAvatar] = useState(AVATARS[0]);
   const [roomCode, setRoomCode] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     // Check for room code in URL
@@ -27,27 +26,17 @@ const Home: React.FC<HomeProps> = ({ onJoin }) => {
     }
   }, []);
 
-  const handleAction = async () => {
+  const handleAction = () => {
     if (!nickname.trim()) return alert("אנא הכנס כינוי!");
-    setIsSubmitting(true);
     
-    try {
-        let result;
-        if (roomCode.trim()) {
-            result = await GameService.joinRoom(roomCode, nickname, avatar);
-        } else {
-            result = await GameService.createRoom(nickname, avatar);
-        }
-        
-        if (result && result.playerId) {
-            onJoin(result.playerId);
-        }
-    } catch (error: any) {
-        alert("שגיאה: " + (error.message || error || "Connection failed"));
-        console.error(error);
-    } finally {
-        setIsSubmitting(false);
+    let result;
+    if (roomCode.trim()) {
+        result = GameService.joinRoom(roomCode, nickname, avatar);
+    } else {
+        result = GameService.createRoom(nickname, avatar);
     }
+    
+    onJoin(result.playerId);
   };
 
   return (
@@ -258,14 +247,8 @@ const Home: React.FC<HomeProps> = ({ onJoin }) => {
                      />
                   </div>
 
-                  <Button 
-                    variant="accent" 
-                    size="lg" 
-                    fullWidth 
-                    onClick={handleAction} 
-                    disabled={isSubmitting}
-                  >
-                     {isSubmitting ? 'מתחבר לשרת...' : (roomCode ? 'הצטרף למשחק! 🚀' : 'צור חדר חדש! 🎲')}
+                  <Button variant="accent" size="lg" fullWidth onClick={handleAction}>
+                     {roomCode ? 'הצטרף למשחק! 🚀' : 'צור חדר חדש! 🎲'}
                   </Button>
             </Card>
           </motion.div>
